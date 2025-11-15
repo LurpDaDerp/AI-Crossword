@@ -1,16 +1,11 @@
 import random
 import tkinter as tk
 
-GRID_SIZE = 15  
+GRID_SIZE = 15
 MIN_PLACED_WORDS = 4
 
 
-
 def pick_balanced_words(words, min_total=5, max_total=8):
-    """
-    Pick between min_total and max_total words, with a rough mix of
-    short (3–4), medium (5–6), and long (7–10) lengths.
-    """
     short = [w for w in words if 3 <= len(w) <= 4]
     medium = [w for w in words if 5 <= len(w) <= 6]
     long = [w for w in words if 7 <= len(w) <= 10]
@@ -19,27 +14,26 @@ def pick_balanced_words(words, min_total=5, max_total=8):
     random.shuffle(medium)
     random.shuffle(long)
 
-    buckets = [
-        ("short", short),
-        ("medium", medium),
-        ("long", long),
-    ]
-
-    total_available = len(short) + len(medium) + len(long)
-    if total_available == 0:
-        return []
-
     total_target = random.randint(min_total, max_total)
-    total_target = min(total_target, total_available)
+
+    want_short = random.randint(0, 1)
+    want_medium = random.randint(3, 4)
+    want_long = max(1, total_target - want_short - want_medium)
 
     chosen = []
+    chosen += short[:min(want_short, len(short))]
+    chosen += medium[:min(want_medium, len(medium))]
+    chosen += long[:min(want_long, len(long))]
 
-    while len(chosen) < total_target and any(b for _, b in buckets if b):
-        non_empty = [(name, b) for name, b in buckets if b]
-        name, bucket = random.choice(non_empty)
-        chosen.append(bucket.pop())
+    while len(chosen) < total_target:
+        for bucket in [medium, long, short]:
+            if bucket:
+                chosen.append(bucket.pop())
+                break
 
+    random.shuffle(chosen)
     return chosen
+
 
 
 def load_words(filename="words10k.txt"):
@@ -65,10 +59,6 @@ def place_first_word(grid, word):
 
 
 def find_overlap_positions(word, placed_words):
-    """
-    For a candidate 'word', find possible overlaps with already-placed words.
-    Returns a list of tuples: (placed_word, (row, col, dir), index_in_placed, index_in_word)
-    """
     positions = []
     for placed_word, (r, c, direction) in placed_words:
         for i, ch1 in enumerate(placed_word):
@@ -81,6 +71,7 @@ def find_overlap_positions(word, placed_words):
 def try_place_word(grid, word, overlap):
     """
     Try to place 'word' on 'grid' based on an overlap location.
+    Enforces that words only touch at intersection cells (no side-adjacency).
     Returns new (row, col, direction) if successful, False otherwise.
     """
     _, (r, c, direction), i, j = overlap
@@ -88,37 +79,80 @@ def try_place_word(grid, word, overlap):
     if direction == "H":
         new_row = r - j
         new_col = c + i
+
         if new_row < 0 or new_row + len(word) > GRID_SIZE:
             return False
+
         for k, ch in enumerate(word):
-            if grid[new_row + k][new_col] not in ("#", ch):
+            rr = new_row + k
+            cc = new_col
+            cell = grid[rr][cc]
+
+            if cell not in ("#", ch):
                 return False
+
+            if cell == "#":
+                if cc - 1 >= 0 and grid[rr][cc - 1] != "#":
+                    return False
+                if cc + 1 < GRID_SIZE and grid[rr][cc + 1] != "#":
+                    return False
+
+        above = new_row - 1
+        below = new_row + len(word)
+        if above >= 0 and grid[above][new_col] != "#":
+            return False
+        if below < GRID_SIZE and grid[below][new_col] != "#":
+            return False
+
         for k, ch in enumerate(word):
-            grid[new_row + k][new_col] = ch
+            rr = new_row + k
+            cc = new_col
+            grid[rr][cc] = ch
+
         return (new_row, new_col, "V")
 
     if direction == "V":
         new_row = r + i
         new_col = c - j
+
         if new_col < 0 or new_col + len(word) > GRID_SIZE:
             return False
+
         for k, ch in enumerate(word):
-            if grid[new_row][new_col + k] not in ("#", ch):
+            rr = new_row
+            cc = new_col + k
+            cell = grid[rr][cc]
+
+            if cell not in ("#", ch):
                 return False
+
+            if cell == "#":
+                if rr - 1 >= 0 and grid[rr - 1][cc] != "#":
+                    return False
+                if rr + 1 < GRID_SIZE and grid[rr + 1][cc] != "#":
+                    return False
+
+        left = new_col - 1
+        right = new_col + len(word)
+        if left >= 0 and grid[new_row][left] != "#":
+            return False
+        if right < GRID_SIZE and grid[new_row][right] != "#":
+            return False
+
         for k, ch in enumerate(word):
-            grid[new_row][new_col + k] = ch
+            rr = new_row
+            cc = new_col + k
+            grid[rr][cc] = ch
+
         return (new_row, new_col, "H")
 
     return False
 
 
 
+
 def generate_crossword(words):
-    """
-    Try to place all given words into a grid.
-    We always place one word in the middle, then try to overlap the rest.
-    """
-    words = words[:] 
+    words = words[:]  
     if not words:
         return empty_grid(GRID_SIZE), []
 
@@ -140,16 +174,17 @@ def generate_crossword(words):
             res = try_place_word(grid, w, overlap)
             if res:
                 placed_words.append((w, res))
-                break 
+                break
 
     return grid, placed_words
+
 
 
 def validate_one_char(new_value):
     return len(new_value) <= 1
 
 
-def build_gui(grid):
+def build_gui(grid, placed_words):
     root = tk.Tk()
     root.title("Crossword Puzzle")
     root.configure(bg="white")
@@ -194,11 +229,31 @@ def build_gui(grid):
                     validatecommand=vcmd
                 )
                 cell.grid(row=r, column=c, padx=1, pady=1)
-                row_entries.append(var)
+                cell.bind("<KeyRelease>", lambda event: check_puzzle())
+                row_entries.append(cell)  
         entries.append(row_entries)
 
-    root.mainloop()
+    def show_message(msg):
+        popup = tk.Toplevel(root)
+        popup.title("Check Result")
+        tk.Label(popup, text=msg, font=("Arial", 16)).pack(padx=20, pady=20)
+        tk.Button(popup, text="OK", command=popup.destroy).pack(pady=10)
 
+    def check_puzzle():
+        for r in range(GRID_SIZE):
+            for c in range(GRID_SIZE):
+                correct = grid[r][c]
+                if correct == "#":
+                    continue
+                entry = entries[r][c]
+                if entry is None:
+                    return  
+                text = entry.get().strip().lower()
+                if text != correct.lower():
+                    return
+        show_message("🎉 Crossword complete!")
+
+    root.mainloop()
 
 
 def main():
@@ -209,16 +264,13 @@ def main():
         grid, placed_words = generate_crossword(chosen_words)
 
         if len(placed_words) >= min(MIN_PLACED_WORDS, len(chosen_words)):
-            break  
+            break
 
-    print("\nWords picked for crossword:")
-    print(chosen_words)
-
-    print("\nWords actually placed in crossword:")
+    print("\nWords used in crossword:")
     for w, pos in placed_words:
         print("-", w)
 
-    build_gui(grid)
+    build_gui(grid, placed_words)
 
 
 if __name__ == "__main__":
