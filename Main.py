@@ -2,10 +2,16 @@ import random
 import tkinter as tk
 
 GRID_SIZE = 15
+
+CELL_SIZE = 60
+LETTER_FONT_SIZE = 20   
+NUMBER_FONT_SIZE = 12
+GRID_PAD = 30     
+
 MIN_PLACED_WORDS = 4
 
 
-def pick_balanced_words(words, min_total=5, max_total=8):
+def pick_balanced_words(words, min_total=6, max_total=20):
     short = [w for w in words if 3 <= len(w) <= 4]
     medium = [w for w in words if 5 <= len(w) <= 6]
     long = [w for w in words if 7 <= len(w) <= 10]
@@ -34,6 +40,27 @@ def pick_balanced_words(words, min_total=5, max_total=8):
     random.shuffle(chosen)
     return chosen
 
+def is_normal_key(event):
+    ignore = {
+        "Shift_L", "Shift_R", "Control_L", "Control_R",
+        "Alt_L", "Alt_R", "Meta_L", "Meta_R",
+        "Caps_Lock", "Num_Lock", "Scroll_Lock",
+        "Escape", "Tab",
+        "Left", "Right", "Up", "Down",
+        "Home", "End", "Prior", "Next", 
+        "Insert", "Delete",
+    }
+
+    if event.keysym.upper().startswith("F") and event.keysym[1:].isdigit():
+        return False
+
+    if event.keysym in {"Return", "BackSpace"}:
+        return False
+
+    if event.char and event.char.strip() != "":
+        return True
+
+    return False
 
 
 def load_words(filename="words10k.txt"):
@@ -148,9 +175,6 @@ def try_place_word(grid, word, overlap):
 
     return False
 
-
-
-
 def generate_crossword(words):
     words = words[:]  
     if not words:
@@ -178,26 +202,26 @@ def generate_crossword(words):
 
     return grid, placed_words
 
-
-
-def validate_one_char(new_value):
-    return len(new_value) <= 1
-
-
 def build_gui(grid, placed_words):
     root = tk.Tk()
     root.title("Crossword Puzzle")
     root.configure(bg="white")
 
-    frame = tk.Frame(root, bg="white")
-    frame.pack(padx=20, pady=20)
+    total_width = GRID_SIZE * CELL_SIZE + 400
+    total_height = GRID_SIZE * CELL_SIZE + 150
+    root.geometry(f"{total_width}x{total_height}")
 
-    vcmd = (root.register(validate_one_char), "%P")
+    main_frame = tk.Frame(root, bg="white")
+    main_frame.pack(padx=GRID_PAD, pady=GRID_PAD, fill="both", expand=True)
 
-    # ----- Build word metadata: word_infos + cell_to_words -----
-    # word_infos[i] = {"word": str, "direction": "H"/"V", "cells": [(r,c), ...]}
+    grid_frame = tk.Frame(main_frame, bg="white")
+    grid_frame.pack(side="left", anchor="n")
+
+    clues_frame = tk.Frame(main_frame, bg="white")
+    clues_frame.pack(side="left", anchor="n", padx=40)
+
     word_infos = []
-    cell_to_words = {}  # (r,c) -> list of word indices that include this cell
+    cell_to_words = {}  
 
     for w, (r, c, direction) in placed_words:
         cells = []
@@ -219,9 +243,41 @@ def build_gui(grid, placed_words):
             cell_to_words.setdefault(coord, []).append(idx)
 
     entries = []
-    active_word_idx = None  # index into word_infos, or None
+    active_word_idx = None
+    highlighted_cells = []
 
-    # helper: is a given word fully filled in UI?
+    game_over = False
+    overlay = None
+
+    start_cells = set(info["cells"][0] for info in word_infos)
+    sorted_starts = sorted(start_cells, key=lambda rc: (rc[0], rc[1]))
+    clue_numbers = {rc: i + 1 for i, rc in enumerate(sorted_starts)}
+
+    across_clues = []
+    down_clues = []
+    for info in word_infos:
+        start = info["cells"][0]
+        num = clue_numbers[start]
+        word = info["word"].upper()
+        if info["direction"] == "H":
+            across_clues.append((num, word))
+        else:
+            down_clues.append((num, word))
+
+    across_clues.sort(key=lambda x: x[0])
+    down_clues.sort(key=lambda x: x[0])
+
+    def move_focus(row, col, dr, dc):
+        """Move focus in direction (dr, dc) to the next non-block cell."""
+        nr, nc = row + dr, col + dc
+        while 0 <= nr < GRID_SIZE and 0 <= nc < GRID_SIZE:
+            target = entries[nr][nc]
+            if target is not None:
+                target.focus_set()
+                return
+            nr += dr
+            nc += dc
+
     def is_word_filled(word_idx):
         for (rr, cc) in word_infos[word_idx]["cells"]:
             entry = entries[rr][cc]
@@ -231,15 +287,53 @@ def build_gui(grid, placed_words):
                 return False
         return True
 
-    # ----- POPUP MESSAGE -----
-    def show_message(msg):
-        popup = tk.Toplevel(root)
-        popup.title("Check Result")
-        tk.Label(popup, text=msg, font=("Arial", 16)).pack(padx=20, pady=20)
-        tk.Button(popup, text="OK", command=popup.destroy).pack(pady=10)
+    def clear_highlight():
+        for (rr, cc) in highlighted_cells:
+            entry = entries[rr][cc]
+            if entry is not None:
+                entry.config(bg="white")
+        highlighted_cells.clear()
 
-    # ----- CHECK PUZZLE (only reacts on success) -----
+    def highlight_word(idx):
+        clear_highlight()
+        if idx is None:
+            return
+        for (rr, cc) in word_infos[idx]["cells"]:
+            entry = entries[rr][cc]
+            if entry is not None:
+                entry.config(bg="#e5f0ff")
+                highlighted_cells.append((rr, cc))
+
+    def show_completion_overlay():
+        nonlocal overlay, game_over
+        game_over = True
+
+        overlay = tk.Frame(root, bg="white")
+        overlay.place(relx=0, rely=0, relwidth=1, relheight=1)
+
+        label = tk.Label(
+            overlay,
+            text="Puzzle complete!\nPress any key to play again",
+            font=("Arial", 24),
+            bg="white",
+            fg="black",
+            justify="center"
+        )
+        label.pack(expand=True)
+
+        def on_any_key(event):
+            if not is_normal_key(event):
+                return 
+
+            root.destroy()
+            main()
+
+        overlay.bind("<Key>", on_any_key)
+        overlay.focus_set()
+
     def check_puzzle():
+        if game_over:
+            return
         for r in range(GRID_SIZE):
             for c in range(GRID_SIZE):
                 correct = grid[r][c]
@@ -250,26 +344,25 @@ def build_gui(grid, placed_words):
                     return
                 text = entry.get().strip().upper()
                 if text != correct.upper():
-                    return  # not complete yet or wrong
-        show_message("🎉 Crossword complete!")
+                    return
+        root.after(1500, show_completion_overlay)
 
-    # ----- CLICK HANDLER: choose active word -----
     def on_cell_click(event, row, col):
         nonlocal active_word_idx
+        if game_over:
+            return
+
         candidates = cell_to_words.get((row, col), [])
         if not candidates:
             active_word_idx = None
+            clear_highlight()
             return
 
-        # 1) words that START at this cell
         starts_here = [i for i in candidates
                        if word_infos[i]["cells"][0] == (row, col)]
-
-        # among starts_here, prefer unfilled
         start_unfilled = [i for i in starts_here if not is_word_filled(i)]
 
         def choose_with_horizontal_preference(indices):
-            # prefer horizontal, else first
             horiz = [i for i in indices if word_infos[i]["direction"] == "H"]
             return horiz[0] if horiz else indices[0]
 
@@ -278,7 +371,6 @@ def build_gui(grid, placed_words):
         elif starts_here:
             chosen = choose_with_horizontal_preference(starts_here)
         else:
-            # 2) No word starts here -> fall back to old logic
             unfilled = [i for i in candidates if not is_word_filled(i)]
             if unfilled:
                 chosen = choose_with_horizontal_preference(unfilled)
@@ -286,61 +378,87 @@ def build_gui(grid, placed_words):
                 chosen = choose_with_horizontal_preference(candidates)
 
         active_word_idx = chosen
+        highlight_word(active_word_idx)
 
-    # ----- KEY HANDLER: uppercase + auto-advance -----
-    def on_key_release(event, row, col):
+    def on_root_click(event):
         nonlocal active_word_idx
+        if game_over:
+            return
+        if isinstance(event.widget, tk.Entry):
+            return
+        clear_highlight()
+        active_word_idx = None
+        root.focus_set()
+
+    root.bind("<Button-1>", on_root_click, add="+")
+
+    def on_key(event, row, col):
+        nonlocal active_word_idx
+        if game_over:
+            return "break"
 
         entry = entries[row][col]
-        text = entry.get()
+        key = event.keysym
+        ch = event.char
 
-        # enforce uppercase, but rely on validate_one_char for length
-        if text:
-            ch = text[0].upper()
+        if key == "Up":
+            move_focus(row, col, -1, 0)
+            return "break"
+        if key == "Down":
+            move_focus(row, col, 1, 0)
+            return "break"
+        if key == "Left":
+            move_focus(row, col, 0, -1)
+            return "break"
+        if key == "Right":
+            move_focus(row, col, 0, 1)
+            return "break"
+
+        if key == "BackSpace":
             entry.delete(0, tk.END)
-            entry.insert(0, ch)
-        else:
-            return  # nothing typed, don't advance
+            return "break"
 
-        # ignore navigation / control keys for auto-advance
-        if event.keysym in (
-            "BackSpace", "Left", "Right", "Up", "Down",
-            "Tab", "Shift_L", "Shift_R", "Control_L", "Control_R"
-        ):
-            return
+        if not ch:
+            return "break"
 
-        ch = entry.get()
-        if not ch.isalpha():
-            return  # don't advance on non-letters
+        if ch.isalpha():
+            upper = ch.upper()
+            entry.delete(0, tk.END)
+            entry.insert(0, upper)
 
-        # If we don't have an active word, nothing to advance in
-        if active_word_idx is None:
-            return
+            if active_word_idx is not None:
+                cells = word_infos[active_word_idx]["cells"]
+                try:
+                    idx = cells.index((row, col))
+                except ValueError:
+                    idx = -1
 
-        cells = word_infos[active_word_idx]["cells"]
-        try:
-            idx = cells.index((row, col))
-        except ValueError:
-            return
+                if idx != -1 and idx + 1 < len(cells):
+                    nr, nc = cells[idx + 1]
+                    next_entry = entries[nr][nc]
+                    if next_entry is not None:
+                        next_entry.focus_set()
+                        next_entry.icursor(1)
 
-        # Move to next cell in the active word, if any
-        if idx + 1 < len(cells):
-            nr, nc = cells[idx + 1]
-            next_entry = entries[nr][nc]
-            if next_entry is not None:
-                next_entry.focus_set()
-                next_entry.icursor(1)
+            check_puzzle()
+            return "break"
 
-        # Optional: auto-check after each letter
-        check_puzzle()
+        return "break"
 
-    # ----- BUILD THE GRID UI -----
+    THIN = 1
+
+    def on_focus_in(event):
+        event.widget.config(highlightthickness=THIN)
+
+    def on_focus_out(event):
+        event.widget.config(highlightthickness=THIN)
+
     for r in range(GRID_SIZE):
         row_entries = []
         for c in range(GRID_SIZE):
             if grid[r][c] == "#":
                 cell = tk.Label(
-                    frame,
+                    grid_frame,
                     width=2,
                     height=1,
                     bg="white",
@@ -350,34 +468,96 @@ def build_gui(grid, placed_words):
                 cell.grid(row=r, column=c, padx=1, pady=1)
                 row_entries.append(None)
             else:
+                cell_frame = tk.Frame(
+                    grid_frame,
+                    bg="white",
+                    width=CELL_SIZE,
+                    height=CELL_SIZE
+                )
+                cell_frame.grid(row=r, column=c, padx=2, pady=2)
+                cell_frame.grid_propagate(False)
+                cell_frame.pack_propagate(False)
+
                 var = tk.StringVar()
-                cell = tk.Entry(
-                    frame,
+                entry = tk.Entry(
+                    cell_frame,
                     width=2,
                     justify="center",
                     textvariable=var,
-                    font=("Arial", 18),
+                    font=("Arial", LETTER_FONT_SIZE),
                     bg="white",
                     fg="black",
                     relief="solid",
                     borderwidth=1,
-                    highlightthickness=3,
+                    highlightthickness=THIN,
                     highlightbackground="white",
                     highlightcolor="black",
-                    validate="key",
-                    validatecommand=vcmd
                 )
-                cell.grid(row=r, column=c, padx=1, pady=1)
+                entry.pack(fill="both", expand=True)
 
-                # click selects active word (with new start-priority logic)
-                cell.bind("<Button-1>", lambda e, row=r, col=c: on_cell_click(e, row, col))
-                # typing -> uppercase + auto-advance + auto-check
-                cell.bind("<KeyRelease>", lambda e, row=r, col=c: on_key_release(e, row, col))
+                if (r, c) in clue_numbers:
+                    num = clue_numbers[(r, c)]
+                    num_label = tk.Label(
+                        cell_frame,
+                        text=str(num),
+                        font=("Arial", NUMBER_FONT_SIZE),
+                        bg="white"
+                    )
+                    num_label.place(x=1, y=0, anchor="nw")
 
-                row_entries.append(cell)
+                entry.bind("<FocusIn>", on_focus_in)
+                entry.bind("<FocusOut>", on_focus_out)
+
+                entry.bind("<Button-1>", lambda e, row=r, col=c: on_cell_click(e, row, col))
+                entry.bind("<KeyPress>", lambda e, row=r, col=c: on_key(e, row, col))
+
+                row_entries.append(entry)
         entries.append(row_entries)
 
+    title = tk.Label(
+        clues_frame,
+        text="Clues",
+        font=("Arial", 20, "bold"),
+        bg="white"
+    )
+    title.pack(anchor="w")
+
+    across_label = tk.Label(
+        clues_frame,
+        text="Across",
+        font=("Arial", 16, "bold"),
+        bg="white"
+    )
+    across_label.pack(anchor="w", pady=(10, 0))
+
+    for num, word in across_clues:
+        lbl = tk.Label(
+            clues_frame,
+            text=f"{num}. {word}",
+            font=("Arial", 12),
+            bg="white"
+        )
+        lbl.pack(anchor="w")
+
+    down_label = tk.Label(
+        clues_frame,
+        text="Down",
+        font=("Arial", 16, "bold"),
+        bg="white"
+    )
+    down_label.pack(anchor="w", pady=(10, 0))
+
+    for num, word in down_clues:
+        lbl = tk.Label(
+            clues_frame,
+            text=f"{num}. {word}",
+            font=("Arial", 12),
+            bg="white"
+        )
+        lbl.pack(anchor="w")
+
     root.mainloop()
+
 
 
 
