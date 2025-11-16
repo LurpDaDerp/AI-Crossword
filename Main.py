@@ -194,8 +194,147 @@ def build_gui(grid, placed_words):
 
     vcmd = (root.register(validate_one_char), "%P")
 
-    entries = []
+    # ----- Build word metadata: word_infos + cell_to_words -----
+    # word_infos[i] = {"word": str, "direction": "H"/"V", "cells": [(r,c), ...]}
+    word_infos = []
+    cell_to_words = {}  # (r,c) -> list of word indices that include this cell
 
+    for w, (r, c, direction) in placed_words:
+        cells = []
+        if direction == "H":
+            for i, ch in enumerate(w):
+                cells.append((r, c + i))
+        else:  # "V"
+            for i, ch in enumerate(w):
+                cells.append((r + i, c))
+
+        idx = len(word_infos)
+        word_infos.append({
+            "word": w,
+            "direction": direction,
+            "cells": cells
+        })
+
+        for coord in cells:
+            cell_to_words.setdefault(coord, []).append(idx)
+
+    entries = []
+    active_word_idx = None  # index into word_infos, or None
+
+    # helper: is a given word fully filled in UI?
+    def is_word_filled(word_idx):
+        for (rr, cc) in word_infos[word_idx]["cells"]:
+            entry = entries[rr][cc]
+            if entry is None:
+                return False
+            if entry.get().strip() == "":
+                return False
+        return True
+
+    # ----- POPUP MESSAGE -----
+    def show_message(msg):
+        popup = tk.Toplevel(root)
+        popup.title("Check Result")
+        tk.Label(popup, text=msg, font=("Arial", 16)).pack(padx=20, pady=20)
+        tk.Button(popup, text="OK", command=popup.destroy).pack(pady=10)
+
+    # ----- CHECK PUZZLE (only reacts on success) -----
+    def check_puzzle():
+        for r in range(GRID_SIZE):
+            for c in range(GRID_SIZE):
+                correct = grid[r][c]
+                if correct == "#":
+                    continue
+                entry = entries[r][c]
+                if entry is None:
+                    return
+                text = entry.get().strip().upper()
+                if text != correct.upper():
+                    return  # not complete yet or wrong
+        show_message("🎉 Crossword complete!")
+
+    # ----- CLICK HANDLER: choose active word -----
+    def on_cell_click(event, row, col):
+        nonlocal active_word_idx
+        candidates = cell_to_words.get((row, col), [])
+        if not candidates:
+            active_word_idx = None
+            return
+
+        # 1) words that START at this cell
+        starts_here = [i for i in candidates
+                       if word_infos[i]["cells"][0] == (row, col)]
+
+        # among starts_here, prefer unfilled
+        start_unfilled = [i for i in starts_here if not is_word_filled(i)]
+
+        def choose_with_horizontal_preference(indices):
+            # prefer horizontal, else first
+            horiz = [i for i in indices if word_infos[i]["direction"] == "H"]
+            return horiz[0] if horiz else indices[0]
+
+        if start_unfilled:
+            chosen = choose_with_horizontal_preference(start_unfilled)
+        elif starts_here:
+            chosen = choose_with_horizontal_preference(starts_here)
+        else:
+            # 2) No word starts here -> fall back to old logic
+            unfilled = [i for i in candidates if not is_word_filled(i)]
+            if unfilled:
+                chosen = choose_with_horizontal_preference(unfilled)
+            else:
+                chosen = choose_with_horizontal_preference(candidates)
+
+        active_word_idx = chosen
+
+    # ----- KEY HANDLER: uppercase + auto-advance -----
+    def on_key_release(event, row, col):
+        nonlocal active_word_idx
+
+        entry = entries[row][col]
+        text = entry.get()
+
+        # enforce uppercase, but rely on validate_one_char for length
+        if text:
+            ch = text[0].upper()
+            entry.delete(0, tk.END)
+            entry.insert(0, ch)
+        else:
+            return  # nothing typed, don't advance
+
+        # ignore navigation / control keys for auto-advance
+        if event.keysym in (
+            "BackSpace", "Left", "Right", "Up", "Down",
+            "Tab", "Shift_L", "Shift_R", "Control_L", "Control_R"
+        ):
+            return
+
+        ch = entry.get()
+        if not ch.isalpha():
+            return  # don't advance on non-letters
+
+        # If we don't have an active word, nothing to advance in
+        if active_word_idx is None:
+            return
+
+        cells = word_infos[active_word_idx]["cells"]
+        try:
+            idx = cells.index((row, col))
+        except ValueError:
+            return
+
+        # Move to next cell in the active word, if any
+        if idx + 1 < len(cells):
+            nr, nc = cells[idx + 1]
+            next_entry = entries[nr][nc]
+            if next_entry is not None:
+                next_entry.focus_set()
+                next_entry.icursor(1)
+
+        # Optional: auto-check after each letter
+        check_puzzle()
+
+    # ----- BUILD THE GRID UI -----
     for r in range(GRID_SIZE):
         row_entries = []
         for c in range(GRID_SIZE):
@@ -229,31 +368,18 @@ def build_gui(grid, placed_words):
                     validatecommand=vcmd
                 )
                 cell.grid(row=r, column=c, padx=1, pady=1)
-                cell.bind("<KeyRelease>", lambda event: check_puzzle())
-                row_entries.append(cell)  
+
+                # click selects active word (with new start-priority logic)
+                cell.bind("<Button-1>", lambda e, row=r, col=c: on_cell_click(e, row, col))
+                # typing -> uppercase + auto-advance + auto-check
+                cell.bind("<KeyRelease>", lambda e, row=r, col=c: on_key_release(e, row, col))
+
+                row_entries.append(cell)
         entries.append(row_entries)
 
-    def show_message(msg):
-        popup = tk.Toplevel(root)
-        popup.title("Check Result")
-        tk.Label(popup, text=msg, font=("Arial", 16)).pack(padx=20, pady=20)
-        tk.Button(popup, text="OK", command=popup.destroy).pack(pady=10)
-
-    def check_puzzle():
-        for r in range(GRID_SIZE):
-            for c in range(GRID_SIZE):
-                correct = grid[r][c]
-                if correct == "#":
-                    continue
-                entry = entries[r][c]
-                if entry is None:
-                    return  
-                text = entry.get().strip().lower()
-                if text != correct.lower():
-                    return
-        show_message("🎉 Crossword complete!")
-
     root.mainloop()
+
+
 
 
 def main():
