@@ -5,8 +5,7 @@ import json
 
 load_dotenv()
 
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-
+client = OpenAI()
 
 def generate_clues(horizontal_words, vertical_words):
     answers = {
