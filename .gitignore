@@ -1,0 +1,16 @@
+# Virtual environments
+.venv/
+myenv/
+
+#env variables
+.env
+
+# Python cache
+__pycache__/
+*.pyc
+
+# macOS junk files
+.DS_Store
+
+# Remove unwanted large text file
+5kOxford.txt

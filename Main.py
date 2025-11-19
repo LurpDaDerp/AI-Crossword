@@ -1,14 +1,19 @@
 import random
 import tkinter as tk
 
+from ClueGenerator import generate_clues
+
+BASE_SCREEN_WIDTH = 2880
+BASE_SCREEN_HEIGHT = 1864
+
 GRID_SIZE = 15
 
-CELL_SIZE = 60
-LETTER_FONT_SIZE = 20   
-NUMBER_FONT_SIZE = 12
-GRID_PAD = 30     
+CELL_SIZE = 80
+LETTER_FONT_SIZE = 25   
+NUMBER_FONT_SIZE = 15
+GRID_PAD = 36     
 
-MIN_PLACED_WORDS = 4
+MIN_PLACED_WORDS = 5
 
 
 def pick_balanced_words(words, min_total=6, max_total=20):
@@ -207,18 +212,41 @@ def build_gui(grid, placed_words):
     root.title("Crossword Puzzle")
     root.configure(bg="white")
 
-    total_width = GRID_SIZE * CELL_SIZE + 400
-    total_height = GRID_SIZE * CELL_SIZE + 150
+    screen_w = root.winfo_screenwidth()
+    screen_h = root.winfo_screenheight()
+
+    scale_w = screen_w / BASE_SCREEN_WIDTH
+    scale_h = screen_h / BASE_SCREEN_HEIGHT
+    scale = min(scale_w, scale_h)
+
+    scale = max(0.6, min(scale, 1.4))
+
+    cell_size = int(CELL_SIZE * scale)
+    grid_pad = int(GRID_PAD * scale)
+    clues_pad_x = int(40 * scale)
+
+    letter_font = ("Arial", max(10, int(LETTER_FONT_SIZE * scale)))
+    number_font = ("Arial", max(8, int(NUMBER_FONT_SIZE * scale)))
+    title_font = ("Arial", max(14, int(32 * scale)), "bold")
+    section_font = ("Arial", max(12, int(24 * scale)), "bold")
+    clue_font = ("Arial", max(10, int(20 * scale)))
+
+    loading_font = ("Arial", max(10, int(24 * scale)), "bold")
+
+    THIN = max(1, int(1 * scale))
+
+    total_width = GRID_SIZE * cell_size + int(1000 * scale)
+    total_height = GRID_SIZE * cell_size + int(150 * scale)
     root.geometry(f"{total_width}x{total_height}")
 
     main_frame = tk.Frame(root, bg="white")
-    main_frame.pack(padx=GRID_PAD, pady=GRID_PAD, fill="both", expand=True)
+    main_frame.pack(padx=grid_pad, pady=grid_pad, fill="both", expand=True)
 
     grid_frame = tk.Frame(main_frame, bg="white")
     grid_frame.pack(side="left", anchor="n")
 
     clues_frame = tk.Frame(main_frame, bg="white")
-    clues_frame.pack(side="left", anchor="n", padx=40)
+    clues_frame.pack(side="left", anchor="n", padx=clues_pad_x)
 
     word_infos = []
     cell_to_words = {}  
@@ -228,7 +256,7 @@ def build_gui(grid, placed_words):
         if direction == "H":
             for i, ch in enumerate(w):
                 cells.append((r, c + i))
-        else:  # "V"
+        else:  
             for i, ch in enumerate(w):
                 cells.append((r + i, c))
 
@@ -253,22 +281,53 @@ def build_gui(grid, placed_words):
     sorted_starts = sorted(start_cells, key=lambda rc: (rc[0], rc[1]))
     clue_numbers = {rc: i + 1 for i, rc in enumerate(sorted_starts)}
 
+    horizontal_words = [info["word"] for info in word_infos if info["direction"] == "H"]
+    vertical_words   = [info["word"] for info in word_infos if info["direction"] == "V"]
+    
+    loading_overlay = tk.Frame(root, bg="white")
+    loading_overlay.place(relx=0, rely=0, relwidth=1, relheight=1)
+
+    loading_label = tk.Label(
+        loading_overlay,
+        text="Generating...",
+        font=("Arial", 32, "bold"),
+        bg="white",
+        fg="black",
+    )
+    loading_label.place(relx=0.5, rely=0.5, anchor="center")
+
+    root.update()  
+
+
+
+    try:
+        clue_data = generate_clues(horizontal_words, vertical_words)
+    except Exception as e:
+        print("Error generating clues, falling back to raw words:", e)
+        clue_data = {
+            "horizontal": {w: w.upper() for w in horizontal_words},
+            "vertical": {w: w.upper() for w in vertical_words},
+        }
+
     across_clues = []
     down_clues = []
+
     for info in word_infos:
         start = info["cells"][0]
         num = clue_numbers[start]
-        word = info["word"].upper()
+        answer = info["word"]
+
         if info["direction"] == "H":
-            across_clues.append((num, word))
+            clue_text = clue_data["horizontal"].get(answer, answer.upper())
+            across_clues.append((num, clue_text))
         else:
-            down_clues.append((num, word))
+            clue_text = clue_data["vertical"].get(answer, answer.upper())
+            down_clues.append((num, clue_text))
 
     across_clues.sort(key=lambda x: x[0])
     down_clues.sort(key=lambda x: x[0])
 
     def move_focus(row, col, dr, dc):
-        """Move focus in direction (dr, dc) to the next non-block cell."""
         nr, nc = row + dr, col + dc
         while 0 <= nr < GRID_SIZE and 0 <= nc < GRID_SIZE:
             target = entries[nr][nc]
@@ -281,9 +340,7 @@ def build_gui(grid, placed_words):
     def is_word_filled(word_idx):
         for (rr, cc) in word_infos[word_idx]["cells"]:
             entry = entries[rr][cc]
-            if entry is None:
-                return False
-            if entry.get().strip() == "":
+            if entry is None or entry.get().strip() == "":
                 return False
         return True
 
@@ -314,7 +371,7 @@ def build_gui(grid, placed_words):
         label = tk.Label(
             overlay,
             text="Puzzle complete!\nPress any key to play again",
-            font=("Arial", 24),
+            font=("Arial", max(12, int(24 * scale))),
             bg="white",
             fg="black",
             justify="center"
@@ -324,7 +381,6 @@ def build_gui(grid, placed_words):
         def on_any_key(event):
             if not is_normal_key(event):
                 return 
-
             root.destroy()
             main()
 
@@ -416,6 +472,19 @@ def build_gui(grid, placed_words):
 
         if key == "BackSpace":
             entry.delete(0, tk.END)
+            if active_word_idx is not None:
+                cells = word_infos[active_word_idx]["cells"]
+                try:
+                    idx = cells.index((row, col))
+                except ValueError:
+                    idx = -1
+
+                if idx > 0: 
+                    pr, pc = cells[idx - 1]
+                    prev_entry = entries[pr][pc]
+                    if prev_entry is not None:
+                        prev_entry.focus_set()
+                        prev_entry.icursor(1)
             return "break"
 
         if not ch:
@@ -445,8 +514,6 @@ def build_gui(grid, placed_words):
 
         return "break"
 
-    THIN = 1
-
     def on_focus_in(event):
         event.widget.config(highlightthickness=THIN)
 
@@ -471,8 +538,8 @@ def build_gui(grid, placed_words):
                 cell_frame = tk.Frame(
                     grid_frame,
                     bg="white",
-                    width=CELL_SIZE,
-                    height=CELL_SIZE
+                    width=cell_size,
+                    height=cell_size
                 )
                 cell_frame.grid(row=r, column=c, padx=2, pady=2)
                 cell_frame.grid_propagate(False)
@@ -484,7 +551,7 @@ def build_gui(grid, placed_words):
                     width=2,
                     justify="center",
                     textvariable=var,
-                    font=("Arial", LETTER_FONT_SIZE),
+                    font=letter_font,
                     bg="white",
                     fg="black",
                     relief="solid",
@@ -500,8 +567,9 @@ def build_gui(grid, placed_words):
                     num_label = tk.Label(
                         cell_frame,
                         text=str(num),
-                        font=("Arial", NUMBER_FONT_SIZE),
-                        bg="white"
+                        font=number_font,
+                        bg="white",
+                        fg="black",
                     )
                     num_label.place(x=1, y=0, anchor="nw")
 
@@ -514,45 +582,54 @@ def build_gui(grid, placed_words):
                 row_entries.append(entry)
         entries.append(row_entries)
 
+    loading_label.destroy()
+    loading_overlay.destroy()
+
+
     title = tk.Label(
         clues_frame,
         text="Clues",
-        font=("Arial", 20, "bold"),
-        bg="white"
+        font=title_font,
+        bg="white",
+        fg="black",
     )
     title.pack(anchor="w")
 
     across_label = tk.Label(
         clues_frame,
         text="Across",
-        font=("Arial", 16, "bold"),
-        bg="white"
+        font=section_font,
+        bg="white",
+        fg="black", 
     )
-    across_label.pack(anchor="w", pady=(10, 0))
+    across_label.pack(anchor="w", pady=(int(10 * scale), 0))
 
     for num, word in across_clues:
         lbl = tk.Label(
             clues_frame,
             text=f"{num}. {word}",
-            font=("Arial", 12),
-            bg="white"
+            font=clue_font,
+            bg="white",
+            fg="black", 
         )
         lbl.pack(anchor="w")
 
     down_label = tk.Label(
         clues_frame,
         text="Down",
-        font=("Arial", 16, "bold"),
-        bg="white"
+        font=section_font,
+        bg="white",
+        fg="black", 
     )
-    down_label.pack(anchor="w", pady=(10, 0))
+    down_label.pack(anchor="w", pady=(int(10 * scale), 0))
 
     for num, word in down_clues:
         lbl = tk.Label(
             clues_frame,
             text=f"{num}. {word}",
-            font=("Arial", 12),
-            bg="white"
+            font=clue_font,
+            bg="white",
+            fg="black", 
         )
         lbl.pack(anchor="w")
 
@@ -561,9 +638,8 @@ def build_gui(grid, placed_words):
 
 
 
-
 def main():
-    words = load_words("words10k.txt")
+    words = load_words("5k.txt")
 
     for attempt in range(20):
         chosen_words = pick_balanced_words(words)
@@ -572,7 +648,7 @@ def main():
         if len(placed_words) >= min(MIN_PLACED_WORDS, len(chosen_words)):
             break
 
-    print("\nWords used in crossword:")
+    print("\nWord Bank:")
     for w, pos in placed_words:
         print("-", w)
 
