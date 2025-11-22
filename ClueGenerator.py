@@ -1,11 +1,11 @@
 import os
+import json
 from dotenv import load_dotenv
 from openai import OpenAI
-import json
 
 load_dotenv()
-
 client = OpenAI()
+
 
 def generate_clues(horizontal_words, vertical_words):
     answers = {
@@ -14,30 +14,36 @@ def generate_clues(horizontal_words, vertical_words):
     }
 
     prompt = f"""
-    You are writing crossword clues
-    Input JSON has two lists: horizontal and vertical words
-    Return ONLY JSON with same keys, but each word mapped to a clue
+You generate crossword clues.
 
-    Format:
-    {{
-    "horizontal": {{ "word": "clue" }},
-    "vertical":   {{ "word": "clue" }}
-    }}
+INPUT WORDS:
+{json.dumps(answers)}
 
-    Clues must be in English, 3–7 words
-    Do NOT include the answer word or related forms
-    Include some fill-in-the-blank clues using "____" in the middle of a phrase that make sense
-    Return ONLY JSON, no explanation
+OUTPUT:
+Return ONLY valid JSON:
+{{
+  "horizontal": {{ "WORD": "clue", ... }},
+  "vertical":   {{ "WORD": "clue", ... }}
+}}
 
-    Input JSON: {json.dumps(answers)}
-        """
+Rules:
+- 3–7 word English clues for these crossword words.
+- Never include the answer word.
+- No markdown, no text outside JSON.
+"""
 
-    resp = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[{"role": "user", "content": prompt}],
-        max_tokens=300,
-        temperature=0.7,
+    resp = client.responses.create(
+        model="gpt-5-mini",
+        input=prompt,
+        max_output_tokens=300,
+        reasoning={ "effort": "minimal" },
     )
 
-    text = resp.choices[0].message.content.strip()
-    return json.loads(text)
+    raw = resp.output_text
+
+    start = raw.find("{")
+    end = raw.rfind("}")
+    if start == -1 or end == -1:
+        raise ValueError("JSON not found in output.")
+
+    return json.loads(raw[start:end + 1])

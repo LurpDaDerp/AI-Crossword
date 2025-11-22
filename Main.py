@@ -221,12 +221,12 @@ def build_gui(grid, placed_words):
 
     scale = max(0.6, min(scale, 1.4))
 
-    cell_size = int(CELL_SIZE * scale)
-    grid_pad = int(GRID_PAD * scale)
-    clues_pad_x = int(40 * scale)
+    cell_size = int(root.winfo_screenheight()/20)
+    grid_pad = int(root.winfo_screenheight()/40)
+    clues_pad_x = int(root.winfo_screenwidth() / 10)
 
-    letter_font = ("Arial", max(10, int(LETTER_FONT_SIZE * scale)))
-    number_font = ("Arial", max(8, int(NUMBER_FONT_SIZE * scale)))
+    letter_font = ("Arial", max(10, int(root.winfo_screenheight()/40)))
+    number_font = ("Arial", max(8, int(root.winfo_screenheight()/80)))
     title_font = ("Arial", max(14, int(32 * scale)), "bold")
     section_font = ("Arial", max(12, int(24 * scale)), "bold")
     clue_font = ("Arial", max(10, int(20 * scale)))
@@ -235,18 +235,24 @@ def build_gui(grid, placed_words):
 
     THIN = max(1, int(1 * scale))
 
-    total_width = GRID_SIZE * cell_size + int(1000 * scale)
-    total_height = GRID_SIZE * cell_size + int(150 * scale)
+    total_width = root.winfo_screenwidth()
+    total_height = root.winfo_screenheight()
     root.geometry(f"{total_width}x{total_height}")
 
     main_frame = tk.Frame(root, bg="white")
     main_frame.pack(padx=grid_pad, pady=grid_pad, fill="both", expand=True)
 
-    grid_frame = tk.Frame(main_frame, bg="white")
-    grid_frame.pack(side="left", anchor="n")
+    grid_container = tk.Frame(main_frame, bg="white")
+    grid_container.pack(side="left", fill="both", expand=True, padx=root.winfo_screenwidth() / 20)
+
+    grid_container.grid_rowconfigure(0, weight=1)
+    grid_container.grid_rowconfigure(2, weight=1)
+
+    grid_frame = tk.Frame(grid_container, bg="white")
+    grid_frame.grid(row=1, column=1)
 
     clues_frame = tk.Frame(main_frame, bg="white")
-    clues_frame.pack(side="left", anchor="n", padx=clues_pad_x)
+    clues_frame.pack(side="right", anchor="n", padx=clues_pad_x)
 
     word_infos = []
     cell_to_words = {}  
@@ -276,6 +282,8 @@ def build_gui(grid, placed_words):
 
     game_over = False
     overlay = None
+    
+    solved_word_idxs = set()
 
     start_cells = set(info["cells"][0] for info in word_infos)
     sorted_starts = sorted(start_cells, key=lambda rc: (rc[0], rc[1]))
@@ -343,23 +351,58 @@ def build_gui(grid, placed_words):
             if entry is None or entry.get().strip() == "":
                 return False
         return True
+    
+    def recompute_word_colors():
+        solved_word_idxs.clear()
+
+        for wi, info in enumerate(word_infos):
+            correct = True
+            for (rr, cc) in info["cells"]:
+                e = entries[rr][cc]
+                if e is None:
+                    correct = False
+                    break
+                text = e.get().strip().upper()
+                if text != grid[rr][cc].upper():
+                    correct = False
+                    break
+            if correct:
+                solved_word_idxs.add(wi)
+
+        for (rr, cc), indices in cell_to_words.items():
+            e = entries[rr][cc]
+            if e is None:
+                continue
+            if any(wi in solved_word_idxs for wi in indices):
+                e.config(bg="#c8f7c5") 
+            else:
+                e.config(bg="white")  
+
+
 
     def clear_highlight():
-        for (rr, cc) in highlighted_cells:
-            entry = entries[rr][cc]
-            if entry is not None:
-                entry.config(bg="white")
         highlighted_cells.clear()
+        recompute_word_colors()
 
     def highlight_word(idx):
-        clear_highlight()
         if idx is None:
             return
+
         for (rr, cc) in word_infos[idx]["cells"]:
-            entry = entries[rr][cc]
-            if entry is not None:
-                entry.config(bg="#e5f0ff")
-                highlighted_cells.append((rr, cc))
+            e = entries[rr][cc]
+            if e is None:
+                continue
+
+            indices = cell_to_words.get((rr, cc), [])
+            if any(wi in solved_word_idxs for wi in indices):
+                e.config(bg="#c8f7c5")
+            else:
+                e.config(bg="#e5f0ff")  
+
+            highlighted_cells.append((rr, cc))
+
+
+
 
     def show_completion_overlay():
         nonlocal overlay, game_over
@@ -401,7 +444,7 @@ def build_gui(grid, placed_words):
                 text = entry.get().strip().upper()
                 if text != correct.upper():
                     return
-        root.after(1500, show_completion_overlay)
+        root.after(1200, show_completion_overlay)
 
     def on_cell_click(event, row, col):
         nonlocal active_word_idx
@@ -434,7 +477,9 @@ def build_gui(grid, placed_words):
                 chosen = choose_with_horizontal_preference(candidates)
 
         active_word_idx = chosen
+        clear_highlight()
         highlight_word(active_word_idx)
+
 
     def on_root_click(event):
         nonlocal active_word_idx
@@ -472,6 +517,7 @@ def build_gui(grid, placed_words):
 
         if key == "BackSpace":
             entry.delete(0, tk.END)
+
             if active_word_idx is not None:
                 cells = word_infos[active_word_idx]["cells"]
                 try:
@@ -479,13 +525,19 @@ def build_gui(grid, placed_words):
                 except ValueError:
                     idx = -1
 
-                if idx > 0: 
+                if idx > 0:
                     pr, pc = cells[idx - 1]
                     prev_entry = entries[pr][pc]
                     if prev_entry is not None:
                         prev_entry.focus_set()
                         prev_entry.icursor(1)
+
+            recompute_word_colors()
+            if active_word_idx is not None:
+                highlight_word(active_word_idx)
+
             return "break"
+
 
         if not ch:
             return "break"
@@ -509,8 +561,13 @@ def build_gui(grid, placed_words):
                         next_entry.focus_set()
                         next_entry.icursor(1)
 
+            recompute_word_colors()
+            if active_word_idx is not None:
+                highlight_word(active_word_idx)
+
             check_puzzle()
             return "break"
+
 
         return "break"
 
@@ -559,6 +616,7 @@ def build_gui(grid, placed_words):
                     highlightthickness=THIN,
                     highlightbackground="white",
                     highlightcolor="black",
+                    insertbackground="black",
                 )
                 entry.pack(fill="both", expand=True)
 
