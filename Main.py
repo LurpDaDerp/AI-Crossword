@@ -101,11 +101,6 @@ def find_overlap_positions(word, placed_words):
 
 
 def try_place_word(grid, word, overlap):
-    """
-    Try to place 'word' on 'grid' based on an overlap location.
-    Enforces that words only touch at intersection cells (no side-adjacency).
-    Returns new (row, col, direction) if successful, False otherwise.
-    """
     _, (r, c, direction), i, j = overlap
 
     if direction == "H":

@@ -3,8 +3,10 @@ import json
 from dotenv import load_dotenv
 from openai import OpenAI
 
-load_dotenv()
+load_dotenv(override=True)
 client = OpenAI()
+
+print("ENV KEY:", os.getenv("OPENAI_API_KEY"))
 
 
 def generate_clues(horizontal_words, vertical_words):
@@ -33,7 +35,7 @@ Rules:
 """
 
     resp = client.responses.create(
-        model="gpt-5-mini",
+        model="gpt-5-nano",
         input=prompt,
         max_output_tokens=300,
         reasoning={ "effort": "minimal" },
